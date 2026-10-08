@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="pt">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Investment Analysis Dashboard</title>
+<style>
+:root{--bg:#f4f6f8;--card:#fff;--text:#17202a;--muted:#65717d;--border:#dfe4e8;--accent:#1f6feb;--green:#18864b;--yellow:#a66b00;--red:#c62828}
+*{box-sizing:border-box} body{margin:0;background:var(--bg);font-family:Arial,Helvetica,sans-serif;color:var(--text)}
+header{background:#17202a;color:#fff;padding:24px 28px} header h1{margin:0 0 6px;font-size:25px} header p{margin:0;color:#cbd3da}
+main{max-width:1200px;margin:24px auto;padding:0 18px}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:18px}.card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:20px;box-shadow:0 2px 8px rgba(0,0,0,.04)}
+.full{grid-column:1/-1} h2{margin:0 0 15px;font-size:19px} h3{margin:18px 0 8px;font-size:15px}
+label{display:block;font-weight:700;margin:10px 0 6px} input,textarea,select{width:100%;padding:11px 12px;border:1px solid #cbd3da;border-radius:8px;font-size:14px;background:#fff} textarea{min-height:180px;resize:vertical}
+button{border:0;border-radius:8px;padding:11px 15px;font-weight:700;cursor:pointer;margin:8px 8px 0 0}.primary{background:var(--accent);color:#fff}.secondary{background:#e9eef3;color:var(--text)}.danger{background:#fdeaea;color:var(--red)}
+.status{margin-top:12px;padding:10px;border-radius:8px;background:#eef5ff;color:#174a8b;display:none}
+table{width:100%;border-collapse:collapse;font-size:13px} th,td{padding:10px 8px;border-bottom:1px solid var(--border);text-align:left} th{background:#f7f9fa}
+.badge{padding:4px 8px;border-radius:999px;font-size:11px;font-weight:700}.buy{background:#e6f6ed;color:var(--green)}.wait{background:#fff4d6;color:var(--yellow)}.avoid{background:#fdeaea;color:var(--red)}.watch{background:#edf0f3;color:#4d5964}
+.small{font-size:12px;color:var(--muted)}.mono{font-family:Consolas,monospace}.empty{text-align:center;color:var(--muted);padding:25px}
+.actions{white-space:nowrap}.hidden{display:none!important}
+@media(max-width:800px){.grid{grid-template-columns:1fr}.full{grid-column:auto}}
+</style>
+</head>
+<body>
+<header>
+  <h1>Investment Analysis Dashboard</h1>
+  <p>Framework Mestre de Análise Fundamental v2.0</p>
+</header>
+
+<main>
+<div class="grid">
+
+<section class="card">
+<h2>Nova análise</h2>
+<label for="url">URL do Yahoo Finance</label>
+<input id="url" placeholder="https://finance.yahoo.com/quote/DECK/key-statistics">
+<div class="small">Pode usar qualquer URL Yahoo Finance que contenha o ticker, por exemplo /quote/DECK/...</div>
+
+<label for="company">Empresa (opcional)</label>
+<input id="company" placeholder="Ex.: Deckers Outdoor">
+
+<label for="notes">Instruções adicionais (opcional)</label>
+<textarea id="notes" style="min-height:100px" placeholder="Ex.: comparar com análise anterior, dar especial atenção ao FCF, etc."></textarea>
+
+<button class="primary" onclick="prepareAnalysis()">EXECUTAR ANÁLISE COMPLETA</button>
+<button class="secondary" onclick="copyPrompt()">COPIAR PEDIDO PARA CHATGPT</button>
+<div id="status" class="status"></div>
+</section>
+
+<section class="card">
+<h2>Empresa selecionada</h2>
+<div id="selected">
+  <div class="empty">Introduz um URL e executa a preparação da análise.</div>
+</div>
+</section>
+
+<section class="card full">
+<h2>Watchlist</h2>
+<div id="watchlist"></div>
+<button class="secondary" onclick="addManual()">+ Adicionar empresa manualmente</button>
+<button class="danger" onclick="clearAll()">Limpar dados locais</button>
+</section>
+
+<section class="card full">
+<h2>Pedido gerado</h2>
+<div class="small">O botão "Executar análise" prepara o pedido. Copia-o e cola-o num novo chat do ChatGPT. O ChatGPT fará a pesquisa atualizada e executará o framework.</div>
+<textarea id="prompt" readonly placeholder="O pedido aparecerá aqui..."></textarea>
+<button class="primary" onclick="copyPrompt()">COPIAR PEDIDO</button>
+<button class="secondary" onclick="openChatGPT()">ABRIR CHATGPT</button>
+</section>
+
+<section class="card full">
+<h2>Como funciona</h2>
+<ol>
+<li>Coloca o URL do Yahoo Finance.</li>
+<li>Clica em <b>Executar análise completa</b>.</li>
+<li>Clica em <b>Copiar pedido para ChatGPT</b>.</li>
+<li>Abre o ChatGPT e cola o pedido.</li>
+<li>Depois da análise, guarda o resultado no teu arquivo de análises.</li>
+</ol>
+<p class="small"><b>Nota:</b> esta versão não acede automaticamente ao Yahoo Finance nem chama uma API. O HTML é uma interface simples para organizar o processo e gerar o pedido correto.</p>
+</section>
+
+</div>
+</main>
+
+<script>
+const STORAGE_KEY="investment_dashboard_v1";
+let state=JSON.parse(localStorage.getItem(STORAGE_KEY)||'{"watchlist":[]}');
+let current={};
+
+function save(){localStorage.setItem(STORAGE_KEY,JSON.stringify(state));render();}
+function esc(s){return String(s??"").replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"}[m]));}
+
+function extractTicker(url){
+  if(!url) return "";
+  try{
+    const u=new URL(url);
+    const m=u.pathname.match(/\/quote\/([^\/?#]+)/i);
+    if(m) return decodeURIComponent(m[1]).toUpperCase();
+  }catch(e){}
+  const m=url.match(/(?:quote\/|ticker=)([A-Za-z0-9._-]+)/i);
+  return m?m[1].toUpperCase():"";
+}
+
+function today(){
+  return new Intl.DateTimeFormat("pt-PT",{dateStyle:"short",timeStyle:"short"}).format(new Date());
+}
+
+function buildPrompt(){
+  const ticker=current.ticker||extractTicker(document.getElementById("url").value);
+  const company=current.company||document.getElementById("company").value.trim()||ticker;
+  const url=document.getElementById("url").value.trim();
+  const notes=document.getElementById("notes").value.trim();
+
+  return `EXECUTAR FRAMEWORK MESTRE DE ANÁLISE FUNDAMENTAL v2.0
+
+Empresa: ${company}
+Ticker: ${ticker}
+URL Yahoo Finance fornecido: ${url||"(não fornecido)"}
+Data da solicitação: ${today()}
+
+INSTRUÇÕES:
+Executa integralmente o Framework Mestre de Análise Fundamental v2.0.
+
+1. Pesquisa dados financeiros atuais e fontes primárias/fiáveis. Não inventes dados.
+2. Analisa o negócio, vantagem competitiva, qualidade económica, ROIC, margens e crescimento.
+3. Analisa o balanço e a dívida relativamente ao setor e aos concorrentes.
+4. Analisa 5–10 anos de CFO/FCO, CapEx, FCF e qualidade do cash flow.
+5. Normaliza o FCF quando o último ano estiver distorcido.
+6. Analisa capital allocation, dividendos, buybacks, dívida, aquisições e evolução das ações em circulação.
+7. Calcula FCF por ação e respetiva evolução.
+8. Constrói previsões Bear/Base/Bull para os próximos 5 anos, usando premissas realistas e conservadoras.
+9. Identifica riscos estruturais, cíclicos, financeiros, competitivos, tecnológicos, regulatórios e de execução.
+10. Calcula Magic Formula: Earnings Yield + ROIC/ROC.
+11. Calcula Acquirer’s Multiple: EV/EBIT normalizado.
+12. Faz valuation relativo.
+13. Escolhe o método de valuation apropriado à estrutura económica:
+   - DCF para empresa operacional normal;
+   - DCF normalizado para empresa cíclica;
+   - SOTP para conglomerados ou empresas com Financial Services relevante;
+   - método específico para bancos, seguradoras e REITs.
+14. Se for BMW, Mercedes ou empresa semelhante com Financial Services material, NÃO uses um DCF consolidado simplista: faz SOTP.
+15. Faz DCF ou SOTP Bear/Base/Bull.
+16. Usa como hurdle rate de referência a Treasury US 10 anos + 5 pontos percentuais, explicando a taxa utilizada. Não a chames automaticamente WACC.
+17. Faz Reverse DCF ou Reverse SOTP: explica o que o preço atual está a descontar.
+18. Calcula margem de segurança de 10%, 20%, 30% e 40%.
+19. Calcula preço máximo compatível com retornos exigidos de 10%, 12% e 15%.
+20. Dá um veredicto: COMPRAR / AGUARDAR / WATCHLIST / EVITAR.
+21. Explica claramente a tese, catalisadores, riscos e o que teria de acontecer para a tese estar errada.
+22. Apresenta fontes e datas dos dados usados.
+
+REGRAS IMPORTANTES:
+- Não produzas falsa precisão.
+- FCF reportado não é necessariamente FCF normalizado.
+- FCF/share é mais importante que FCF total para o acionista.
+- Não uses Magic Formula ou Acquirer’s Multiple isoladamente para decidir.
+- Não uses um método de valuation inadequado à estrutura do negócio.
+- Se faltarem dados, diz explicitamente quais.
+
+${notes?`\nINSTRUÇÕES ADICIONAIS DO UTILIZADOR:\n${notes}`:""}
+
+FORMATO FINAL:
+1. Resumo executivo
+2. Investment Killers
+3. Negócio e vantagem competitiva
+4. Qualidade económica
+5. Balanço
+6. Cash Flow
+7. Capital allocation e ações
+8. Crescimento 5 anos
+9. Riscos
+10. Magic Formula
+11. Acquirer’s Multiple
+12. Valuation relativo
+13. DCF/SOTP
+14. Reverse DCF/SOTP
+15. Margem de segurança
+16. Preços de entrada
+17. Veredicto
+18. Fontes`;
+}
+
+function prepareAnalysis(){
+  const url=document.getElementById("url").value.trim();
+  const ticker=extractTicker(url);
+  if(!ticker){
+    showStatus("Não consegui identificar o ticker no URL. Usa um URL do tipo finance.yahoo.com/quote/TICKER/...",true);
+    return;
+  }
+  current={ticker,company:document.getElementById("company").value.trim()||ticker,url};
+  document.getElementById("prompt").value=buildPrompt();
+  document.getElementById("selected").innerHTML=`
+    <h3>${esc(current.company)}</h3>
+    <p><b>Ticker:</b> <span class="mono">${esc(ticker)}</span></p>
+    <p><b>Data:</b> ${esc(today())}</p>
+    <p class="small">${esc(url)}</p>`;
+  upsertWatchlist(current);
+  showStatus("Pedido preparado. Copia-o e cola-o no ChatGPT para executar a análise.");
+}
+
+function upsertWatchlist(item){
+  const i=state.watchlist.findIndex(x=>x.ticker===item.ticker);
+  const obj={ticker:item.ticker,company:item.company,lastAnalysis:today(),price:"",valuation:"",decision:"WATCHLIST"};
+  if(i<0) state.watchlist.push(obj);
+  else state.watchlist[i]={...state.watchlist[i],company:item.company,lastAnalysis:today()};
+  localStorage.setItem(STORAGE_KEY,JSON.stringify(state));
+  render();
+}
+
+async function copyPrompt(){
+  const p=document.getElementById("prompt").value||buildPrompt();
+  try{
+    await navigator.clipboard.writeText(p);
+    showStatus("Pedido copiado para a área de transferência.");
+  }catch(e){
+    document.getElementById("prompt").select();
+    document.execCommand("copy");
+    showStatus("Pedido copiado. Se necessário, usa Ctrl+C.");
+  }
+}
+
+function openChatGPT(){window.open("https://chatgpt.com/","_blank");}
+
+function addManual(){
+  const company=prompt("Nome da empresa:");
+  if(!company) return;
+  const ticker=prompt("Ticker:");
+  if(!ticker) return;
+  state.watchlist.push({company,ticker:ticker.toUpperCase(),lastAnalysis:today(),price:"",valuation:"",decision:"WATCHLIST"});
+  save();
+}
+
+function updateRow(i,key){
+  state.watchlist[i][key]=document.getElementById(`w_${i}_${key}`).value;
+  localStorage.setItem(STORAGE_KEY,JSON.stringify(state));
+}
+
+function render(){
+  const el=document.getElementById("watchlist");
+  if(!state.watchlist.length){el.innerHTML='<div class="empty">Ainda não há empresas na Watchlist.</div>';return;}
+  let html='<table><thead><tr><th>Empresa</th><th>Ticker</th><th>Preço</th><th>Valor Base</th><th>Decisão</th><th>Última análise</th></tr></thead><tbody>';
+  state.watchlist.forEach((x,i)=>{
+    const cls=x.decision==="COMPRAR"?"buy":x.decision==="AGUARDAR"?"wait":x.decision==="EVITAR"?"avoid":"watch";
+    html+=`<tr>
+      <td>${esc(x.company)}</td><td class="mono">${esc(x.ticker)}</td>
+      <td><input id="w_${i}_price" value="${esc(x.price)}" onchange="updateRow(${i},'price')" style="width:100px"></td>
+      <td><input id="w_${i}_valuation" value="${esc(x.valuation)}" onchange="updateRow(${i},'valuation')" style="width:100px"></td>
+      <td><select id="w_${i}_decision" onchange="updateRow(${i},'decision')">
+        <option ${x.decision==="COMPRAR"?"selected":""}>COMPRAR</option>
+        <option ${x.decision==="AGUARDAR"?"selected":""}>AGUARDAR</option>
+        <option ${x.decision==="WATCHLIST"?"selected":""}>WATCHLIST</option>
+        <option ${x.decision==="EVITAR"?"selected":""}>EVITAR</option>
+      </select></td>
+      <td>${esc(x.lastAnalysis)}</td>
+    </tr>`;
+  });
+  html+='</tbody></table>';
+  el.innerHTML=html;
+}
+
+function showStatus(msg,error=false){
+  const s=document.getElementById("status");s.textContent=msg;s.style.display="block";s.style.background=error?"#fdeaea":"#eef5ff";s.style.color=error?"#9b1c1c":"#174a8b";
+}
+
+function clearAll(){
+  if(confirm("Apagar a Watchlist e todos os dados guardados neste navegador?")){
+    state={watchlist:[]};localStorage.removeItem(STORAGE_KEY);render();
+  }
+}
+
+render();
+</script>
+</body>
+</html>
